@@ -31,7 +31,7 @@ class RDSInventoryCollector:
     """Collects RDS inventory across multiple AWS regions and accounts."""
     
     def __init__(self, profile: str = None, regions: List[str] = None, store_in_db: bool = False, 
-                 aws_account_id: str = None, bu_name: str = None):
+                 aws_account_id: str = None, bu_name: str = None, db_host: str = None):
         """
         Initialize the RDS Inventory Collector.
         
@@ -41,6 +41,7 @@ class RDSInventoryCollector:
             store_in_db: Whether to store results in database
             aws_account_id: AWS Account ID for multi-account tracking
             bu_name: Business Unit name for multi-account tracking
+            db_host: Database host (overrides environment variable)
         """
         self.profile = profile
         self.session = boto3.Session(profile_name=profile) if profile else boto3.Session()
@@ -50,6 +51,7 @@ class RDSInventoryCollector:
         self.db_connection = None
         self.aws_account_id = aws_account_id
         self.bu_name = bu_name or 'Default'
+        self.db_host = db_host
         
         # Try to get AWS Account ID if not provided
         if not self.aws_account_id:
@@ -83,7 +85,8 @@ class RDSInventoryCollector:
     def _connect_to_database(self):
         """Connect to MySQL database."""
         try:
-            db_host = os.getenv('DB_HOST')
+            # Use provided db_host or get from environment
+            db_host = self.db_host or os.getenv('DB_HOST')
             db_user = os.getenv('DB_USER')
             db_password = os.getenv('DB_PASSWORD')
             db_name = os.getenv('DB_NAME')
@@ -94,17 +97,29 @@ class RDSInventoryCollector:
                 self.store_in_db = False
                 return
             
+            logger.info(f"🔗 Attempting to connect to database host: {db_host}")
+            
             self.db_connection = mysql.connector.connect(
                 host=db_host,
                 user=db_user,
                 password=db_password,
                 database=db_name,
-                autocommit=True
+                autocommit=True,
+                connection_timeout=30
             )
             logger.info(f"✅ Successfully connected to database: {db_name}")
         except mysql.connector.Error as e:
             logger.error(f"❌ Failed to connect to database: {e}")
-            logger.error("Make sure your database is running and credentials are correct.")
+            logger.error(f"   Host: {db_host}")
+            logger.error(f"   User: {db_user}")
+            logger.error("Make sure your database is running, credentials are correct,")
+            logger.error("and your IP address is allowed in the security group.")
+            logger.error("")
+            logger.error("💡 Troubleshooting:")
+            logger.error("   1. Verify the DB_HOST is correct (should be AWS RDS endpoint)")
+            logger.error("   2. Check DB credentials are correct")
+            logger.error("   3. Ensure your IP is in the RDS security group")
+            logger.error("   4. Check if the database is publicly accessible")
             self.store_in_db = False
     
     def _create_table(self):
@@ -413,6 +428,11 @@ def main():
         default=None
     )
     parser.add_argument(
+        '--db-host',
+        help='Database host override (default: use DB_HOST env variable)',
+        default=None
+    )
+    parser.add_argument(
         '--debug',
         action='store_true',
         help='Enable debug logging'
@@ -429,7 +449,8 @@ def main():
             regions=args.regions,
             store_in_db=args.db,
             aws_account_id=args.account_id,
-            bu_name=args.bu_name
+            bu_name=args.bu_name,
+            db_host=args.db_host
         )
         collector.collect_rds_instances()
         
