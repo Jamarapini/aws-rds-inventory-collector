@@ -4,6 +4,7 @@ AWS RDS Inventory Collector with Database Storage
 
 Collects RDS instance information across multiple AWS regions and accounts,
 and stores the data in a MySQL database for centralized inventory management.
+Supports multiple AWS accounts with Business Unit (BU) tracking.
 """
 
 import boto3
@@ -29,7 +30,8 @@ logger = logging.getLogger(__name__)
 class RDSInventoryCollector:
     """Collects RDS inventory across multiple AWS regions and accounts."""
     
-    def __init__(self, profile: str = None, regions: List[str] = None, store_in_db: bool = False):
+    def __init__(self, profile: str = None, regions: List[str] = None, store_in_db: bool = False, 
+                 aws_account_id: str = None, bu_name: str = None):
         """
         Initialize the RDS Inventory Collector.
         
@@ -37,6 +39,8 @@ class RDSInventoryCollector:
             profile: AWS profile name to use
             regions: List of AWS regions to scan. If None, scans all available regions.
             store_in_db: Whether to store results in database
+            aws_account_id: AWS Account ID for multi-account tracking
+            bu_name: Business Unit name for multi-account tracking
         """
         self.profile = profile
         self.session = boto3.Session(profile_name=profile) if profile else boto3.Session()
@@ -44,11 +48,28 @@ class RDSInventoryCollector:
         self.inventory_data = []
         self.store_in_db = store_in_db
         self.db_connection = None
+        self.aws_account_id = aws_account_id
+        self.bu_name = bu_name or 'Default'
+        
+        # Try to get AWS Account ID if not provided
+        if not self.aws_account_id:
+            self.aws_account_id = self._get_aws_account_id()
         
         if self.store_in_db:
             self._connect_to_database()
             self._create_table()
         
+    def _get_aws_account_id(self) -> str:
+        """Get AWS Account ID from STS."""
+        try:
+            sts_client = self.session.client('sts')
+            account_id = sts_client.get_caller_identity()['Account']
+            logger.info(f"📌 AWS Account ID: {account_id}")
+            return account_id
+        except Exception as e:
+            logger.warning(f"Could not retrieve AWS Account ID: {e}")
+            return 'UNKNOWN'
+    
     def _get_all_regions(self) -> List[str]:
         """Get all available AWS regions for RDS."""
         try:
@@ -98,6 +119,7 @@ class RDSInventoryCollector:
             CREATE TABLE IF NOT EXISTS rds_inventory (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 aws_account_id VARCHAR(50),
+                bu_name VARCHAR(100),
                 collection_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 region VARCHAR(50),
                 db_instance_identifier VARCHAR(255),
@@ -125,6 +147,8 @@ class RDSInventoryCollector:
                 db_subnet_group_name VARCHAR(255),
                 iops INT,
                 tags LONGTEXT,
+                INDEX idx_aws_account (aws_account_id),
+                INDEX idx_bu_name (bu_name),
                 INDEX idx_region (region),
                 INDEX idx_identifier (db_instance_identifier),
                 INDEX idx_timestamp (collection_timestamp)
@@ -133,7 +157,7 @@ class RDSInventoryCollector:
             
             cursor.execute(create_table_query)
             logger.info("✅ Table 'rds_inventory' is ready")
-            logger.info("📊 Columns: 29 fields (customized)")
+            logger.info("📊 Columns: 31 fields (including AWS Account & BU tracking)")
             cursor.close()
         except mysql.connector.Error as e:
             logger.error(f"❌ Error creating table: {e}")
@@ -148,7 +172,7 @@ class RDSInventoryCollector:
             
             insert_query = """
             INSERT INTO rds_inventory (
-                aws_account_id, region, db_instance_identifier, db_instance_class,
+                aws_account_id, bu_name, region, db_instance_identifier, db_instance_class,
                 engine, engine_version, db_instance_status, master_username,
                 endpoint_address, endpoint_port, allocated_storage, storage_type,
                 multi_az, availability_zone, vpc_id, publicly_accessible,
@@ -158,12 +182,13 @@ class RDSInventoryCollector:
                 db_subnet_group_name, iops, tags
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """
             
             values = (
-                instance_data.get('aws_account_id', 'N/A'),
+                self.aws_account_id,
+                self.bu_name,
                 instance_data.get('Region'),
                 instance_data.get('DBInstanceIdentifier'),
                 instance_data.get('DBInstanceClass'),
@@ -193,14 +218,15 @@ class RDSInventoryCollector:
             )
             
             cursor.execute(insert_query, values)
-            logger.debug(f"Inserted: {instance_data.get('DBInstanceIdentifier')}")
+            logger.debug(f"Inserted: {instance_data.get('DBInstanceIdentifier')} (BU: {self.bu_name})")
             cursor.close()
         except mysql.connector.Error as e:
             logger.error(f"❌ Error inserting data into database: {e}")
     
     def collect_rds_instances(self) -> List[Dict[str, Any]]:
         """Collect RDS instances from all specified regions."""
-        logger.info(f"🔍 Starting RDS inventory collection across {len(self.regions)} regions")
+        logger.info(f"🔍 Starting RDS inventory collection for {self.bu_name} (Account: {self.aws_account_id})")
+        logger.info(f"📍 Scanning {len(self.regions)} regions")
         
         for region in self.regions:
             logger.info(f"📍 Scanning region: {region}")
@@ -224,7 +250,7 @@ class RDSInventoryCollector:
             except Exception as e:
                 logger.error(f"❌ Unexpected error in region {region}: {e}")
         
-        logger.info(f"✅ Collection complete. Found {len(self.inventory_data)} RDS instances.")
+        logger.info(f"✅ Collection complete for {self.bu_name}. Found {len(self.inventory_data)} RDS instances.")
         return self.inventory_data
     
     def _extract_instance_data(self, db_instance: Dict, region: str) -> Dict[str, Any]:
@@ -256,7 +282,6 @@ class RDSInventoryCollector:
         tags_str = json.dumps(tags) if tags else 'N/A'
         
         return {
-            'aws_account_id': 'N/A',
             'Region': region,
             'DBInstanceIdentifier': db_instance.get('DBInstanceIdentifier', 'N/A'),
             'DBInstanceClass': db_instance.get('DBInstanceClass', 'N/A'),
@@ -293,7 +318,7 @@ class RDSInventoryCollector:
         
         if not filename:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"rds_inventory_{timestamp}.xlsx"
+            filename = f"rds_inventory_{self.bu_name}_{timestamp}.xlsx"
         
         logger.info(f"📊 Exporting inventory to {filename}")
         
@@ -354,7 +379,7 @@ class RDSInventoryCollector:
 def main():
     """Main entry point for the script."""
     parser = argparse.ArgumentParser(
-        description='Collect AWS RDS inventory across multiple regions and export to Excel/Database'
+        description='Collect AWS RDS inventory across multiple regions, accounts, and BUs'
     )
     parser.add_argument(
         '--profile',
@@ -369,13 +394,23 @@ def main():
     )
     parser.add_argument(
         '--output',
-        help='Output Excel filename (default: rds_inventory_TIMESTAMP.xlsx)',
+        help='Output Excel filename (default: rds_inventory_BU_TIMESTAMP.xlsx)',
         default=None
     )
     parser.add_argument(
         '--db',
         action='store_true',
         help='Store inventory in MySQL database (requires DB_* environment variables)'
+    )
+    parser.add_argument(
+        '--account-id',
+        help='AWS Account ID (for multi-account tracking)',
+        default=None
+    )
+    parser.add_argument(
+        '--bu-name',
+        help='Business Unit name (for multi-account tracking)',
+        default=None
     )
     parser.add_argument(
         '--debug',
@@ -392,7 +427,9 @@ def main():
         collector = RDSInventoryCollector(
             profile=args.profile,
             regions=args.regions,
-            store_in_db=args.db
+            store_in_db=args.db,
+            aws_account_id=args.account_id,
+            bu_name=args.bu_name
         )
         collector.collect_rds_instances()
         
