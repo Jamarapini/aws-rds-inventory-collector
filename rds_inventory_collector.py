@@ -11,6 +11,7 @@ import argparse
 import logging
 import mysql.connector
 import os
+import json
 from datetime import datetime
 from typing import List, Dict, Any
 from openpyxl import Workbook
@@ -109,7 +110,6 @@ class RDSInventoryCollector:
                 endpoint_port INT,
                 allocated_storage INT,
                 storage_type VARCHAR(50),
-                storage_encrypted BOOLEAN,
                 multi_az BOOLEAN,
                 availability_zone VARCHAR(100),
                 vpc_id VARCHAR(100),
@@ -119,11 +119,12 @@ class RDSInventoryCollector:
                 preferred_maintenance_window VARCHAR(100),
                 auto_minor_version_upgrade BOOLEAN,
                 license_model VARCHAR(100),
-                deletion_protection BOOLEAN,
-                iam_database_authentication_enabled BOOLEAN,
-                performance_insights_enabled BOOLEAN,
-                latest_restorable_time DATETIME,
                 instance_create_time DATETIME,
+                db_security_groups LONGTEXT,
+                parameter_group_name VARCHAR(255),
+                db_subnet_group_name VARCHAR(255),
+                iops INT,
+                tags LONGTEXT,
                 INDEX idx_region (region),
                 INDEX idx_identifier (db_instance_identifier),
                 INDEX idx_timestamp (collection_timestamp)
@@ -132,6 +133,7 @@ class RDSInventoryCollector:
             
             cursor.execute(create_table_query)
             logger.info("✅ Table 'rds_inventory' is ready")
+            logger.info("📊 Columns: 29 fields (customized)")
             cursor.close()
         except mysql.connector.Error as e:
             logger.error(f"❌ Error creating table: {e}")
@@ -149,11 +151,11 @@ class RDSInventoryCollector:
                 aws_account_id, region, db_instance_identifier, db_instance_class,
                 engine, engine_version, db_instance_status, master_username,
                 endpoint_address, endpoint_port, allocated_storage, storage_type,
-                storage_encrypted, multi_az, availability_zone, vpc_id,
-                publicly_accessible, backup_retention_period, preferred_backup_window,
+                multi_az, availability_zone, vpc_id, publicly_accessible,
+                backup_retention_period, preferred_backup_window,
                 preferred_maintenance_window, auto_minor_version_upgrade, license_model,
-                deletion_protection, iam_database_authentication_enabled,
-                performance_insights_enabled, latest_restorable_time, instance_create_time
+                instance_create_time, db_security_groups, parameter_group_name,
+                db_subnet_group_name, iops, tags
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
@@ -173,7 +175,6 @@ class RDSInventoryCollector:
                 instance_data.get('Port'),
                 instance_data.get('AllocatedStorage'),
                 instance_data.get('StorageType'),
-                instance_data.get('StorageEncrypted'),
                 instance_data.get('MultiAZ'),
                 instance_data.get('AvailabilityZone'),
                 instance_data.get('VpcId'),
@@ -183,11 +184,12 @@ class RDSInventoryCollector:
                 instance_data.get('PreferredMaintenanceWindow'),
                 instance_data.get('AutoMinorVersionUpgrade'),
                 instance_data.get('LicenseModel'),
-                instance_data.get('DeletionProtection'),
-                instance_data.get('IAMDatabaseAuthenticationEnabled'),
-                instance_data.get('PerformanceInsightsEnabled'),
-                instance_data.get('LatestRestorableTime'),
-                instance_data.get('InstanceCreateTime')
+                instance_data.get('InstanceCreateTime'),
+                instance_data.get('DBSecurityGroups'),
+                instance_data.get('ParameterGroupName'),
+                instance_data.get('DBSubnetGroupName'),
+                instance_data.get('Iops'),
+                instance_data.get('Tags')
             )
             
             cursor.execute(insert_query, values)
@@ -227,6 +229,32 @@ class RDSInventoryCollector:
     
     def _extract_instance_data(self, db_instance: Dict, region: str) -> Dict[str, Any]:
         """Extract relevant data from RDS instance description."""
+        
+        # Extract security groups
+        db_security_groups = []
+        if db_instance.get('DBSecurityGroups'):
+            db_security_groups = [sg.get('DBSecurityGroupName', 'N/A') for sg in db_instance.get('DBSecurityGroups', [])]
+        db_security_groups_str = json.dumps(db_security_groups) if db_security_groups else 'N/A'
+        
+        # Extract parameter group name
+        parameter_group_name = 'N/A'
+        if db_instance.get('DBParameterGroups'):
+            parameter_group_name = db_instance.get('DBParameterGroups', [{}])[0].get('DBParameterGroupName', 'N/A')
+        
+        # Extract subnet group name
+        db_subnet_group_name = 'N/A'
+        if db_instance.get('DBSubnetGroup'):
+            db_subnet_group_name = db_instance.get('DBSubnetGroup', {}).get('DBSubnetGroupName', 'N/A')
+        
+        # Extract IOPS
+        iops = db_instance.get('Iops', None)
+        
+        # Extract tags
+        tags = {}
+        if db_instance.get('TagList'):
+            tags = {tag.get('Key', ''): tag.get('Value', '') for tag in db_instance.get('TagList', [])}
+        tags_str = json.dumps(tags) if tags else 'N/A'
+        
         return {
             'aws_account_id': 'N/A',
             'Region': region,
@@ -240,7 +268,6 @@ class RDSInventoryCollector:
             'Port': db_instance.get('Endpoint', {}).get('Port', 'N/A') if db_instance.get('Endpoint') else 'N/A',
             'AllocatedStorage': db_instance.get('AllocatedStorage', 'N/A'),
             'StorageType': db_instance.get('StorageType', 'N/A'),
-            'StorageEncrypted': db_instance.get('StorageEncrypted', False),
             'MultiAZ': db_instance.get('MultiAZ', False),
             'AvailabilityZone': db_instance.get('AvailabilityZone', 'N/A'),
             'VpcId': db_instance.get('DBSubnetGroup', {}).get('VpcId', 'N/A') if db_instance.get('DBSubnetGroup') else 'N/A',
@@ -248,13 +275,14 @@ class RDSInventoryCollector:
             'BackupRetentionPeriod': db_instance.get('BackupRetentionPeriod', 'N/A'),
             'PreferredBackupWindow': db_instance.get('PreferredBackupWindow', 'N/A'),
             'PreferredMaintenanceWindow': db_instance.get('PreferredMaintenanceWindow', 'N/A'),
-            'LatestRestorableTime': db_instance.get('LatestRestorableTime', 'N/A'),
-            'InstanceCreateTime': db_instance.get('InstanceCreateTime', 'N/A'),
             'AutoMinorVersionUpgrade': db_instance.get('AutoMinorVersionUpgrade', False),
             'LicenseModel': db_instance.get('LicenseModel', 'N/A'),
-            'DeletionProtection': db_instance.get('DeletionProtection', False),
-            'IAMDatabaseAuthenticationEnabled': db_instance.get('IAMDatabaseAuthenticationEnabled', False),
-            'PerformanceInsightsEnabled': db_instance.get('PerformanceInsightsEnabled', False),
+            'InstanceCreateTime': db_instance.get('InstanceCreateTime', 'N/A'),
+            'DBSecurityGroups': db_security_groups_str,
+            'ParameterGroupName': parameter_group_name,
+            'DBSubnetGroupName': db_subnet_group_name,
+            'Iops': iops,
+            'Tags': tags_str,
         }
     
     def export_to_excel(self, filename: str = None):
