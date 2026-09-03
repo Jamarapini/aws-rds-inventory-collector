@@ -35,8 +35,33 @@ st.markdown("""
         border-radius: 0.5rem;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
+    .bu-button {
+        background-color: #f0f2f6;
+        border: 2px solid #ddd;
+        border-radius: 8px;
+        padding: 12px 20px;
+        margin: 5px;
+        cursor: pointer;
+        font-weight: 500;
+        text-align: center;
+        display: inline-block;
+        transition: all 0.3s ease;
+    }
+    .bu-button:hover {
+        background-color: #e0e6f2;
+        border-color: #4472ca;
+    }
+    .bu-button.active {
+        background-color: #4472ca;
+        color: white;
+        border-color: #4472ca;
+    }
     </style>
     """, unsafe_allow_html=True)
+
+# Initialize session state for BU filter
+if 'selected_bu' not in st.session_state:
+    st.session_state.selected_bu = None
 
 
 def load_env_file(env_path: str = '.env'):
@@ -188,12 +213,40 @@ def overview_page(data):
     
     st.markdown("---")
     
+    # Business Unit Filter Buttons
+    st.markdown("### 🎯 Filter by Business Unit")
+    
+    bu_list = sorted(list(set(row.get('bu_name') for row in data)))
+    
+    # Create columns for BU buttons
+    cols = st.columns(len(bu_list))
+    for idx, bu in enumerate(bu_list):
+        with cols[idx]:
+            if st.button(bu, key=f"bu_btn_{bu}", use_container_width=True):
+                st.session_state.selected_bu = bu
+                st.rerun()
+    
+    # Show selected BU or all data
+    if st.session_state.selected_bu:
+        filtered_data = [row for row in data if row.get('bu_name') == st.session_state.selected_bu]
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.success(f"📍 Filtered by: **{st.session_state.selected_bu}**")
+        with col2:
+            if st.button("❌ Clear Filter", use_container_width=True):
+                st.session_state.selected_bu = None
+                st.rerun()
+    else:
+        filtered_data = data
+    
+    st.markdown("---")
+    
     # Charts - Row 1
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("### Instances by Business Unit")
-        bu_counts = Counter(row.get('bu_name') for row in data)
+        bu_counts = Counter(row.get('bu_name') for row in filtered_data)
         bu_df_dict = {
             'Business Unit': list(bu_counts.keys()),
             'Count': list(bu_counts.values())
@@ -204,7 +257,7 @@ def overview_page(data):
     
     with col2:
         st.markdown("### Instances by Region")
-        region_counts = Counter(row.get('region') for row in data)
+        region_counts = Counter(row.get('region') for row in filtered_data)
         region_list = sorted(region_counts.items(), key=lambda x: x[1], reverse=True)
         region_df_dict = {
             'Region': [x[0] for x in region_list],
@@ -220,7 +273,7 @@ def overview_page(data):
     
     with col1:
         st.markdown("### Instances by Engine Type")
-        engine_counts = Counter(row.get('engine') for row in data)
+        engine_counts = Counter(row.get('engine') for row in filtered_data)
         engine_list = sorted(engine_counts.items(), key=lambda x: x[1], reverse=True)
         engine_df_dict = {
             'Engine': [x[0] for x in engine_list],
@@ -233,8 +286,8 @@ def overview_page(data):
     
     with col2:
         st.markdown("### Multi-AZ vs Single-AZ")
-        multi_az_count = stats.get('multi_az', 0)
-        single_az_count = stats.get('total_instances', 0) - multi_az_count
+        multi_az_count = sum(1 for row in filtered_data if row.get('multi_az') == True or row.get('multi_az') == 1)
+        single_az_count = len(filtered_data) - multi_az_count
         multi_az_data = {
             'Type': ['Multi-AZ', 'Single-AZ'],
             'Count': [multi_az_count, single_az_count]
@@ -247,7 +300,7 @@ def overview_page(data):
     
     # Instance Status
     st.markdown("### Instance Status Distribution")
-    status_counts = Counter(row.get('db_instance_status') for row in data)
+    status_counts = Counter(row.get('db_instance_status') for row in filtered_data)
     status_list = sorted(status_counts.items(), key=lambda x: x[1], reverse=True)
     status_df_dict = {
         'Status': [x[0] for x in status_list],
@@ -501,6 +554,7 @@ def about_page(data):
     - 🔍 **Instance Browser** - Search, filter, and explore RDS instances
     - 📈 **Analytics** - Detailed insights and analysis
     - 💾 **Data Export** - Download filtered data as CSV
+    - 🎯 **Business Unit Filtering** - Quick filter by BU buttons
     
     ### Data Information
     """)
@@ -555,7 +609,7 @@ def about_page(data):
     For issues or feature requests, please contact your DevOps team.
     
     ### Dashboard Version
-    Version 1.1.0 (Windows Compatible - No NumPy/Pandas)
+    Version 1.2.0 (Windows Compatible - Business Unit Filter Buttons)
     """)
 
 
