@@ -175,12 +175,6 @@ class RDSInventoryCollector:
                 vpc_id VARCHAR(100),
                 publicly_accessible BOOLEAN,
                 backup_retention_period INT,
-                preferred_backup_window VARCHAR(100),
-                preferred_maintenance_window VARCHAR(100),
-                auto_minor_version_upgrade BOOLEAN,
-                license_model VARCHAR(100),
-                instance_create_time DATETIME,
-                db_security_groups LONGTEXT,
                 parameter_group_name VARCHAR(255),
                 db_subnet_group_name VARCHAR(255),
                 iops INT,
@@ -195,7 +189,7 @@ class RDSInventoryCollector:
             
             cursor.execute(create_table_query)
             logger.info("✅ Table 'rds_inventory' is ready")
-            logger.info("📊 Columns: 31 fields (including AWS Account & BU tracking)")
+            logger.info("📊 Columns: 25 fields (essential RDS inventory data)")
             cursor.close()
         except mysql.connector.Error as e:
             logger.error(f"❌ Error creating table: {e}")
@@ -214,13 +208,11 @@ class RDSInventoryCollector:
                 engine, engine_version, db_instance_status, master_username,
                 endpoint_address, endpoint_port, allocated_storage, storage_type,
                 multi_az, availability_zone, vpc_id, publicly_accessible,
-                backup_retention_period, preferred_backup_window,
-                preferred_maintenance_window, auto_minor_version_upgrade, license_model,
-                instance_create_time, db_security_groups, parameter_group_name,
+                backup_retention_period, parameter_group_name,
                 db_subnet_group_name, iops, tags
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s
             )
             """
             
@@ -243,12 +235,6 @@ class RDSInventoryCollector:
                 instance_data.get('VpcId'),
                 instance_data.get('PubliclyAccessible'),
                 instance_data.get('BackupRetentionPeriod'),
-                instance_data.get('PreferredBackupWindow'),
-                instance_data.get('PreferredMaintenanceWindow'),
-                instance_data.get('AutoMinorVersionUpgrade'),
-                instance_data.get('LicenseModel'),
-                instance_data.get('InstanceCreateTime'),
-                instance_data.get('DBSecurityGroups'),
                 instance_data.get('ParameterGroupName'),
                 instance_data.get('DBSubnetGroupName'),
                 instance_data.get('Iops'),
@@ -294,12 +280,6 @@ class RDSInventoryCollector:
     def _extract_instance_data(self, db_instance: Dict, region: str) -> Dict[str, Any]:
         """Extract relevant data from RDS instance description."""
         
-        # Extract security groups
-        db_security_groups = []
-        if db_instance.get('DBSecurityGroups'):
-            db_security_groups = [sg.get('DBSecurityGroupName', 'N/A') for sg in db_instance.get('DBSecurityGroups', [])]
-        db_security_groups_str = json.dumps(db_security_groups) if db_security_groups else 'N/A'
-        
         # Extract parameter group name
         parameter_group_name = 'N/A'
         if db_instance.get('DBParameterGroups'):
@@ -336,12 +316,6 @@ class RDSInventoryCollector:
             'VpcId': db_instance.get('DBSubnetGroup', {}).get('VpcId', 'N/A') if db_instance.get('DBSubnetGroup') else 'N/A',
             'PubliclyAccessible': db_instance.get('PubliclyAccessible', False),
             'BackupRetentionPeriod': db_instance.get('BackupRetentionPeriod', 'N/A'),
-            'PreferredBackupWindow': db_instance.get('PreferredBackupWindow', 'N/A'),
-            'PreferredMaintenanceWindow': db_instance.get('PreferredMaintenanceWindow', 'N/A'),
-            'AutoMinorVersionUpgrade': db_instance.get('AutoMinorVersionUpgrade', False),
-            'LicenseModel': db_instance.get('LicenseModel', 'N/A'),
-            'InstanceCreateTime': db_instance.get('InstanceCreateTime', 'N/A'),
-            'DBSecurityGroups': db_security_groups_str,
             'ParameterGroupName': parameter_group_name,
             'DBSubnetGroupName': db_subnet_group_name,
             'Iops': iops,
