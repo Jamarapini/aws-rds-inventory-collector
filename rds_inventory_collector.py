@@ -28,6 +28,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Profiles to exclude from scanning
+EXCLUDED_PROFILES = [
+    'loseit-dev',
+    'loseit-ca',
+    'loseit-datascience',
+    'lcm-lower',
+    'lcm-prod'
+]
+
+# Profile-specific region overrides
+PROFILE_REGION_OVERRIDES = {
+    'bc-prod': ['us-east-1', 'us-west-1', 'us-west-2'],
+    'bc-dev': ['us-east-1', 'us-west-2']
+}
+
 
 def load_env_file(env_path: str = '.env'):
     """Load environment variables from .env file."""
@@ -44,12 +59,16 @@ def load_env_file(env_path: str = '.env'):
 
 
 def get_aws_profiles() -> List[str]:
-    """Get all AWS profiles from AWS config."""
+    """Get all AWS profiles from AWS config, excluding specified profiles."""
     try:
         result = subprocess.run(['aws', 'configure', 'list-profiles'], 
                               capture_output=True, text=True)
         profiles = result.stdout.strip().split('\n')
         profiles = [p.strip() for p in profiles if p.strip()]
+        
+        # Filter out excluded profiles
+        profiles = [p for p in profiles if p not in EXCLUDED_PROFILES]
+        
         return profiles
     except Exception as e:
         logger.warning(f"Could not retrieve AWS profiles: {e}")
@@ -66,7 +85,7 @@ class RDSInventoryCollector:
         
         Args:
             profile: AWS profile name to use
-            regions: List of AWS regions to scan. If None, scans all available regions.
+            regions: List of AWS regions to scan. If None, uses profile-specific or all available regions.
             store_in_db: Whether to store results in database
             aws_account_id: AWS Account ID for multi-account tracking
             bu_name: Business Unit name (defaults to profile name)
@@ -74,7 +93,19 @@ class RDSInventoryCollector:
         """
         self.profile = profile
         self.session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-        self.regions = regions or self._get_all_regions()
+        
+        # Determine regions to use
+        if regions:
+            # Use provided regions
+            self.regions = regions
+        elif profile and profile in PROFILE_REGION_OVERRIDES:
+            # Use profile-specific regions
+            self.regions = PROFILE_REGION_OVERRIDES[profile]
+            logger.info(f"📍 Using profile-specific regions for {profile}: {', '.join(self.regions)}")
+        else:
+            # Use all regions
+            self.regions = self._get_all_regions()
+        
         self.inventory_data = []
         self.store_in_db = store_in_db
         self.db_connection = None
@@ -265,7 +296,7 @@ class RDSInventoryCollector:
     def collect_rds_instances(self) -> List[Dict[str, Any]]:
         """Collect RDS instances from all specified regions."""
         logger.info(f"🔍 Starting RDS inventory collection for {self.bu_name} (Account: {self.aws_account_id})")
-        logger.info(f"📍 Scanning {len(self.regions)} regions")
+        logger.info(f"📍 Scanning {len(self.regions)} regions: {', '.join(self.regions)}")
         
         for region in self.regions:
             logger.info(f"📍 Scanning region: {region}")
@@ -416,12 +447,12 @@ def main():
     parser.add_argument(
         '--all-profiles',
         action='store_true',
-        help='Scan all AWS profiles configured in ~/.aws/config'
+        help='Scan all AWS profiles configured in ~/.aws/config (excluding cross-account profiles)'
     )
     parser.add_argument(
         '--regions',
         nargs='+',
-        help='Specific AWS regions to scan (default: all regions)',
+        help='Specific AWS regions to scan (default: profile-specific or all regions)',
         default=None
     )
     parser.add_argument(
@@ -469,12 +500,16 @@ def main():
             profiles = get_aws_profiles()
             
             if not profiles:
-                logger.error("❌ No AWS profiles found. Please configure your AWS credentials.")
+                logger.error("❌ No AWS profiles found (after excluding cross-account profiles).")
+                logger.error(f"   Excluded profiles: {', '.join(EXCLUDED_PROFILES)}")
                 return 1
             
-            logger.info(f"🔍 Found {len(profiles)} AWS profiles to scan:")
+            logger.info(f"🔍 Found {len(profiles)} AWS profiles to scan (excluding {len(EXCLUDED_PROFILES)} cross-account profiles):")
             for profile in profiles:
-                logger.info(f"   - {profile}")
+                if profile in PROFILE_REGION_OVERRIDES:
+                    logger.info(f"   - {profile} → {', '.join(PROFILE_REGION_OVERRIDES[profile])}")
+                else:
+                    logger.info(f"   - {profile} → all regions")
             logger.info("")
             
             # Scan each profile
