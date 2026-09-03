@@ -13,6 +13,7 @@ import logging
 import mysql.connector
 import os
 import json
+import subprocess
 from datetime import datetime
 from typing import List, Dict, Any
 from pathlib import Path
@@ -42,6 +43,19 @@ def load_env_file(env_path: str = '.env'):
                         logger.debug(f"  Loaded: {key.strip()}")
 
 
+def get_aws_profiles() -> List[str]:
+    """Get all AWS profiles from AWS config."""
+    try:
+        result = subprocess.run(['aws', 'configure', 'list-profiles'], 
+                              capture_output=True, text=True)
+        profiles = result.stdout.strip().split('\n')
+        profiles = [p.strip() for p in profiles if p.strip()]
+        return profiles
+    except Exception as e:
+        logger.warning(f"Could not retrieve AWS profiles: {e}")
+        return []
+
+
 class RDSInventoryCollector:
     """Collects RDS inventory across multiple AWS regions and accounts."""
     
@@ -55,7 +69,7 @@ class RDSInventoryCollector:
             regions: List of AWS regions to scan. If None, scans all available regions.
             store_in_db: Whether to store results in database
             aws_account_id: AWS Account ID for multi-account tracking
-            bu_name: Business Unit name for multi-account tracking
+            bu_name: Business Unit name (defaults to profile name)
             db_host: Database host (overrides environment variable)
         """
         self.profile = profile
@@ -65,7 +79,8 @@ class RDSInventoryCollector:
         self.store_in_db = store_in_db
         self.db_connection = None
         self.aws_account_id = aws_account_id
-        self.bu_name = bu_name or 'Default'
+        # Use profile name as BU name if not provided
+        self.bu_name = bu_name or profile or 'Default'
         self.db_host = db_host
         
         # Try to get AWS Account ID if not provided
@@ -399,6 +414,11 @@ def main():
         default=None
     )
     parser.add_argument(
+        '--all-profiles',
+        action='store_true',
+        help='Scan all AWS profiles configured in ~/.aws/config'
+    )
+    parser.add_argument(
         '--regions',
         nargs='+',
         help='Specific AWS regions to scan (default: all regions)',
@@ -421,7 +441,7 @@ def main():
     )
     parser.add_argument(
         '--bu-name',
-        help='Business Unit name (for multi-account tracking)',
+        help='Business Unit name (for multi-account tracking, defaults to profile name)',
         default=None
     )
     parser.add_argument(
@@ -444,21 +464,63 @@ def main():
     load_env_file('.env')
     
     try:
-        collector = RDSInventoryCollector(
-            profile=args.profile,
-            regions=args.regions,
-            store_in_db=args.db,
-            aws_account_id=args.account_id,
-            bu_name=args.bu_name,
-            db_host=args.db_host
-        )
-        collector.collect_rds_instances()
+        # If scanning all profiles
+        if args.all_profiles:
+            profiles = get_aws_profiles()
+            
+            if not profiles:
+                logger.error("❌ No AWS profiles found. Please configure your AWS credentials.")
+                return 1
+            
+            logger.info(f"🔍 Found {len(profiles)} AWS profiles to scan:")
+            for profile in profiles:
+                logger.info(f"   - {profile}")
+            logger.info("")
+            
+            # Scan each profile
+            for profile in profiles:
+                logger.info(f"{'='*60}")
+                logger.info(f"📊 Scanning profile: {profile}")
+                logger.info(f"{'='*60}")
+                
+                try:
+                    collector = RDSInventoryCollector(
+                        profile=profile,
+                        regions=args.regions,
+                        store_in_db=args.db,
+                        aws_account_id=args.account_id,
+                        bu_name=profile,  # Use profile name as BU name
+                        db_host=args.db_host
+                    )
+                    collector.collect_rds_instances()
+                    
+                    # Export to Excel if requested
+                    if args.output:
+                        collector.export_to_excel(filename=f"{profile}_{args.output}")
+                    
+                    collector.close_database()
+                    logger.info(f"✅ Completed scanning profile: {profile}\n")
+                except Exception as e:
+                    logger.error(f"❌ Error scanning profile {profile}: {e}\n")
+                    continue
         
-        # Export to Excel if not only storing in DB
-        if not args.db or args.output:
-            collector.export_to_excel(filename=args.output)
-        
-        collector.close_database()
+        else:
+            # Scan single profile
+            collector = RDSInventoryCollector(
+                profile=args.profile,
+                regions=args.regions,
+                store_in_db=args.db,
+                aws_account_id=args.account_id,
+                bu_name=args.bu_name or args.profile,  # Use profile name if no BU name provided
+                db_host=args.db_host
+            )
+            collector.collect_rds_instances()
+            
+            # Export to Excel if not only storing in DB
+            if not args.db or args.output:
+                collector.export_to_excel(filename=args.output)
+            
+            collector.close_database()
         
     except NoCredentialsError:
         logger.error("❌ AWS credentials not found. Please configure your credentials.")
