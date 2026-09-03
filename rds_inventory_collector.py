@@ -15,6 +15,7 @@ import os
 import json
 from datetime import datetime
 from typing import List, Dict, Any
+from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from botocore.exceptions import ClientError, NoCredentialsError
@@ -25,6 +26,20 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def load_env_file(env_path: str = '.env'):
+    """Load environment variables from .env file."""
+    if os.path.exists(env_path):
+        logger.info(f"📄 Loading environment variables from {env_path}")
+        with open(env_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        os.environ[key.strip()] = value.strip()
+                        logger.debug(f"  Loaded: {key.strip()}")
 
 
 class RDSInventoryCollector:
@@ -92,12 +107,21 @@ class RDSInventoryCollector:
             db_name = os.getenv('DB_NAME')
             
             if not all([db_host, db_user, db_password, db_name]):
-                logger.warning("Database credentials not found. Set environment variables:")
+                logger.warning("Database credentials not found. Set environment variables or create .env file:")
                 logger.warning("  DB_HOST, DB_USER, DB_PASSWORD, DB_NAME")
+                logger.warning("")
+                logger.warning("Example .env file:")
+                logger.warning("  DB_HOST=ops-prod-ue1-operations-rds-01.cetqu8suvjjy.us-east-1.rds.amazonaws.com")
+                logger.warning("  DB_USER=inventory")
+                logger.warning("  DB_PASSWORD=your_password")
+                logger.warning("  DB_NAME=inventory")
                 self.store_in_db = False
                 return
             
-            logger.info(f"🔗 Attempting to connect to database host: {db_host}")
+            logger.info(f"🔗 Attempting to connect to database...")
+            logger.info(f"   Host: {db_host}")
+            logger.info(f"   User: {db_user}")
+            logger.info(f"   Database: {db_name}")
             
             self.db_connection = mysql.connector.connect(
                 host=db_host,
@@ -110,16 +134,15 @@ class RDSInventoryCollector:
             logger.info(f"✅ Successfully connected to database: {db_name}")
         except mysql.connector.Error as e:
             logger.error(f"❌ Failed to connect to database: {e}")
-            logger.error(f"   Host: {db_host}")
-            logger.error(f"   User: {db_user}")
-            logger.error("Make sure your database is running, credentials are correct,")
-            logger.error("and your IP address is allowed in the security group.")
             logger.error("")
             logger.error("💡 Troubleshooting:")
-            logger.error("   1. Verify the DB_HOST is correct (should be AWS RDS endpoint)")
-            logger.error("   2. Check DB credentials are correct")
-            logger.error("   3. Ensure your IP is in the RDS security group")
-            logger.error("   4. Check if the database is publicly accessible")
+            logger.error("   1. Verify DB_HOST is correct (should be AWS RDS endpoint, not IP)")
+            logger.error("   2. Check DB_USER and DB_PASSWORD are correct")
+            logger.error("   3. Ensure your IP address is in the RDS security group inbound rules")
+            logger.error("   4. Verify the database is publicly accessible")
+            logger.error("   5. Test connection manually:")
+            logger.error(f"      mysql -h {db_host} -u {db_user} -p")
+            logger.error("")
             self.store_in_db = False
     
     def _create_table(self):
@@ -415,7 +438,7 @@ def main():
     parser.add_argument(
         '--db',
         action='store_true',
-        help='Store inventory in MySQL database (requires DB_* environment variables)'
+        help='Store inventory in MySQL database (requires DB_* environment variables or .env file)'
     )
     parser.add_argument(
         '--account-id',
@@ -429,7 +452,7 @@ def main():
     )
     parser.add_argument(
         '--db-host',
-        help='Database host override (default: use DB_HOST env variable)',
+        help='Database host override (default: use DB_HOST env variable or .env file)',
         default=None
     )
     parser.add_argument(
@@ -442,6 +465,9 @@ def main():
     
     if args.debug:
         logger.setLevel(logging.DEBUG)
+    
+    # Load .env file if it exists
+    load_env_file('.env')
     
     try:
         collector = RDSInventoryCollector(
