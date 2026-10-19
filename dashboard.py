@@ -130,16 +130,10 @@ def get_bu_list(data):
 def render_bu_filter(bu_list):
     st.markdown("### 🎯 Filter by Business Unit")
 
-    if 'selected_bus' not in st.session_state:
-        st.session_state.selected_bus = []
-
-    if 'bu_filter_input' not in st.session_state:
-        st.session_state.bu_filter_input = []
-
     selected_bus = st.multiselect(
         "Select one or more Business Units",
         options=bu_list,
-        default=st.session_state.selected_bus,
+        default=st.session_state.get("selected_bus", []),
         key="bu_filter_input",
         help="Leave empty to show all Business Units."
     )
@@ -158,7 +152,7 @@ def render_bu_filter(bu_list):
             st.session_state.bu_filter_input = []
             st.rerun()
 
-    return [row for row in data if row.get('bu_name') in selected_bus] if selected_bus else data
+    return selected_bus
 
 
 def main():
@@ -228,7 +222,8 @@ def overview_page(data):
     
     # Business Unit Filter
     bu_list = get_bu_list(data)
-    filtered_data = render_bu_filter(bu_list)
+    selected_bus = render_bu_filter(bu_list)
+    filtered_data = [row for row in data if row.get('bu_name') in selected_bus] if selected_bus else data
     
     st.markdown("---")
     
@@ -589,7 +584,7 @@ def about_page(data):
     For issues or feature requests, please contact your DevOps team.
     
     ### Dashboard Version
-    Version 1.2.3 (Windows Compatible - Business Unit Multiselect Filter)
+    Version 1.2.4 (Windows Compatible - Business Unit Multiselect Filter)
     """)
 
 
