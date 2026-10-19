@@ -48,7 +48,7 @@ def load_env_file(env_path: str = '.env'):
                 if line and not line.startswith('#'):
                     if '=' in line:
                         key, value = line.split('=', 1)
-                        os.environ[key.strip()] = value.strip()
+                        os.environ[key.strip()] = value.strip().strip('"').strip("'")
 
 
 @st.cache_resource
@@ -123,6 +123,44 @@ def create_simple_dataframe(data, columns):
     return data
 
 
+def get_bu_list(data):
+    return sorted({row.get('bu_name') for row in data if row.get('bu_name')})
+
+
+def render_bu_filter(bu_list):
+    st.markdown("### 🎯 Filter by Business Unit")
+
+    if 'selected_bus' not in st.session_state:
+        st.session_state.selected_bus = []
+
+    if 'bu_filter_input' not in st.session_state:
+        st.session_state.bu_filter_input = []
+
+    selected_bus = st.multiselect(
+        "Select one or more Business Units",
+        options=bu_list,
+        default=st.session_state.selected_bus,
+        key="bu_filter_input",
+        help="Leave empty to show all Business Units."
+    )
+
+    st.session_state.selected_bus = selected_bus
+
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        if selected_bus:
+            st.success(f"📍 Filtered by: **{', '.join(selected_bus)}**")
+        else:
+            st.info("Showing all Business Units")
+    with col2:
+        if st.button("❌ Clear Filter", use_container_width=True):
+            st.session_state.selected_bus = []
+            st.session_state.bu_filter_input = []
+            st.rerun()
+
+    return [row for row in data if row.get('bu_name') in selected_bus] if selected_bus else data
+
+
 def main():
     """Main dashboard application."""
     
@@ -189,51 +227,8 @@ def overview_page(data):
     st.markdown("---")
     
     # Business Unit Filter
-    st.markdown("### 🎯 Filter by Business Unit")
-    
-    bu_list = sorted(
-        {
-            row.get('bu_name')
-            for row in data
-            if row.get('bu_name')
-        }
-    )
-
-    if 'selected_bus' not in st.session_state:
-        st.session_state.selected_bus = []
-
-    # Wrap buttons into rows of 6
-    buttons_per_row = 6
-    for i in range(0, len(bu_list), buttons_per_row):
-        row_bus = bu_list[i:i + buttons_per_row]
-        cols = st.columns(len(row_bus))
-
-        for idx, bu in enumerate(row_bus):
-            with cols[idx]:
-                is_selected = bu in st.session_state.selected_bus
-                label = f"✅ {bu}" if is_selected else bu
-
-                if st.button(label, key=f"bu_btn_{bu}", use_container_width=True):
-                    st.session_state.selected_bus = [bu]
-                    st.rerun()
-
-    # Selected filter status
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        if st.session_state.selected_bus:
-            st.success(f"📍 Filtered by: **{', '.join(st.session_state.selected_bus)}**")
-        else:
-            st.info("Showing all Business Units")
-    with col2:
-        if st.button("❌ Clear Filter", use_container_width=True):
-            st.session_state.selected_bus = []
-            st.rerun()
-
-    filtered_data = (
-        [row for row in data if row.get('bu_name') in st.session_state.selected_bus]
-        if st.session_state.selected_bus
-        else data
-    )
+    bu_list = get_bu_list(data)
+    filtered_data = render_bu_filter(bu_list)
     
     st.markdown("---")
     
@@ -316,7 +311,7 @@ def browser_page(data):
     st.markdown("### 🔎 Search & Filter")
     
     # Get unique values for filters
-    bu_list = sorted(list(set(row.get('bu_name') for row in data)))
+    bu_list = sorted(list(set(row.get('bu_name') for row in data if row.get('bu_name'))))
     region_list = sorted(list(set(row.get('region') for row in data)))
     engine_list = sorted(list(set(row.get('engine') for row in data)))
     
@@ -379,14 +374,6 @@ def browser_page(data):
     st.markdown("### 📋 RDS Instances")
     
     if filtered_data:
-        # Create table for display
-        display_columns = [
-            'bu_name', 'db_instance_identifier', 'engine', 'engine_version',
-            'db_instance_class', 'allocated_storage', 'storage_type', 'region',
-            'multi_az', 'db_instance_status', 'publicly_accessible', 'endpoint_address'
-        ]
-        
-        # Create list of lists for display
         table_data = []
         for row in filtered_data:
             table_data.append([
@@ -404,7 +391,6 @@ def browser_page(data):
                 row.get('endpoint_address', 'N/A'),
             ])
         
-        # Display as dataframe-like table
         st.dataframe(
             {
                 'BU': [r[0] for r in table_data],
@@ -491,7 +477,6 @@ def analytics_page(data):
     col1, col2 = st.columns(2)
     
     with col1:
-        # Publicly accessible instances
         public_instances = [row for row in data if row.get('publicly_accessible') == True or row.get('publicly_accessible') == 1]
         st.warning(f"⚠️ Publicly Accessible Instances: {len(public_instances)}")
         
@@ -505,7 +490,6 @@ def analytics_page(data):
             st.dataframe(public_display, use_container_width=True, hide_index=True)
     
     with col2:
-        # Backup retention
         backups = [int(row.get('backup_retention_period', 0)) for row in data if row.get('backup_retention_period', 0)]
         avg_backup = sum(backups) / len(backups) if backups else 0
         st.info(f"📅 Average Backup Retention: {avg_backup:.1f} days")
@@ -550,7 +534,7 @@ def about_page(data):
     - 🔍 **Instance Browser** - Search, filter, and explore RDS instances
     - 📈 **Analytics** - Detailed insights and analysis
     - 💾 **Data Export** - Download filtered data as CSV
-    - 🎯 **Business Unit Filtering** - Wrapping BU buttons for readability
+    - 🎯 **Business Unit Filtering** - Readable multiselect filter
     
     ### Data Information
     """)
@@ -605,7 +589,7 @@ def about_page(data):
     For issues or feature requests, please contact your DevOps team.
     
     ### Dashboard Version
-    Version 1.2.2 (Windows Compatible - Wrapped Business Unit Buttons)
+    Version 1.2.3 (Windows Compatible - Business Unit Multiselect Filter)
     """)
 
 
