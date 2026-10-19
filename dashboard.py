@@ -35,33 +35,8 @@ st.markdown("""
         border-radius: 0.5rem;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
-    .bu-button {
-        background-color: #f0f2f6;
-        border: 2px solid #ddd;
-        border-radius: 8px;
-        padding: 12px 20px;
-        margin: 5px;
-        cursor: pointer;
-        font-weight: 500;
-        text-align: center;
-        display: inline-block;
-        transition: all 0.3s ease;
-    }
-    .bu-button:hover {
-        background-color: #e0e6f2;
-        border-color: #4472ca;
-    }
-    .bu-button.active {
-        background-color: #4472ca;
-        color: white;
-        border-color: #4472ca;
-    }
     </style>
     """, unsafe_allow_html=True)
-
-# Initialize session state for BU filter
-if 'selected_bu' not in st.session_state:
-    st.session_state.selected_bu = None
 
 
 def load_env_file(env_path: str = '.env'):
@@ -213,31 +188,46 @@ def overview_page(data):
     
     st.markdown("---")
     
-    # Business Unit Filter Buttons
+    # Business Unit Filter
     st.markdown("### 🎯 Filter by Business Unit")
     
-    bu_list = sorted(list(set(row.get('bu_name') for row in data)))
-    
-    # Create columns for BU buttons
-    cols = st.columns(len(bu_list))
-    for idx, bu in enumerate(bu_list):
-        with cols[idx]:
-            if st.button(bu, key=f"bu_btn_{bu}", use_container_width=True):
-                st.session_state.selected_bu = bu
-                st.rerun()
-    
-    # Show selected BU or all data
-    if st.session_state.selected_bu:
-        filtered_data = [row for row in data if row.get('bu_name') == st.session_state.selected_bu]
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            st.success(f"📍 Filtered by: **{st.session_state.selected_bu}**")
-        with col2:
-            if st.button("❌ Clear Filter", use_container_width=True):
-                st.session_state.selected_bu = None
-                st.rerun()
-    else:
-        filtered_data = data
+    bu_list = sorted(
+        {
+            row.get('bu_name')
+            for row in data
+            if row.get('bu_name')
+        }
+    )
+
+    if 'selected_bus' not in st.session_state:
+        st.session_state.selected_bus = []
+
+    selected_bus = st.multiselect(
+        "Select one or more Business Units",
+        options=bu_list,
+        default=st.session_state.selected_bus,
+        key="bu_filter_multiselect",
+        help="Leave empty to show all Business Units."
+    )
+
+    st.session_state.selected_bus = selected_bus
+
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        if selected_bus:
+            st.success(f"📍 Filtered by: **{', '.join(selected_bus)}**")
+        else:
+            st.info("Showing all Business Units")
+    with col2:
+        if st.button("❌ Clear Filter", use_container_width=True):
+            st.session_state.selected_bus = []
+            st.rerun()
+
+    filtered_data = (
+        [row for row in data if row.get('bu_name') in selected_bus]
+        if selected_bus
+        else data
+    )
     
     st.markdown("---")
     
@@ -554,7 +544,7 @@ def about_page(data):
     - 🔍 **Instance Browser** - Search, filter, and explore RDS instances
     - 📈 **Analytics** - Detailed insights and analysis
     - 💾 **Data Export** - Download filtered data as CSV
-    - 🎯 **Business Unit Filtering** - Quick filter by BU buttons
+    - 🎯 **Business Unit Filtering** - Quick filter by BU multiselect
     
     ### Data Information
     """)
@@ -609,7 +599,7 @@ def about_page(data):
     For issues or feature requests, please contact your DevOps team.
     
     ### Dashboard Version
-    Version 1.2.0 (Windows Compatible - Business Unit Filter Buttons)
+    Version 1.2.1 (Windows Compatible - Business Unit Multiselect Filter)
     """)
 
 
