@@ -202,20 +202,26 @@ def overview_page(data):
     if 'selected_bus' not in st.session_state:
         st.session_state.selected_bus = []
 
-    selected_bus = st.multiselect(
-        "Select one or more Business Units",
-        options=bu_list,
-        default=st.session_state.selected_bus,
-        key="bu_filter_multiselect",
-        help="Leave empty to show all Business Units."
-    )
+    # Wrap buttons into rows of 6
+    buttons_per_row = 6
+    for i in range(0, len(bu_list), buttons_per_row):
+        row_bus = bu_list[i:i + buttons_per_row]
+        cols = st.columns(len(row_bus))
 
-    st.session_state.selected_bus = selected_bus
+        for idx, bu in enumerate(row_bus):
+            with cols[idx]:
+                is_selected = bu in st.session_state.selected_bus
+                label = f"✅ {bu}" if is_selected else bu
 
+                if st.button(label, key=f"bu_btn_{bu}", use_container_width=True):
+                    st.session_state.selected_bus = [bu]
+                    st.rerun()
+
+    # Selected filter status
     col1, col2 = st.columns([4, 1])
     with col1:
-        if selected_bus:
-            st.success(f"📍 Filtered by: **{', '.join(selected_bus)}**")
+        if st.session_state.selected_bus:
+            st.success(f"📍 Filtered by: **{', '.join(st.session_state.selected_bus)}**")
         else:
             st.info("Showing all Business Units")
     with col2:
@@ -224,8 +230,8 @@ def overview_page(data):
             st.rerun()
 
     filtered_data = (
-        [row for row in data if row.get('bu_name') in selected_bus]
-        if selected_bus
+        [row for row in data if row.get('bu_name') in st.session_state.selected_bus]
+        if st.session_state.selected_bus
         else data
     )
     
@@ -544,7 +550,7 @@ def about_page(data):
     - 🔍 **Instance Browser** - Search, filter, and explore RDS instances
     - 📈 **Analytics** - Detailed insights and analysis
     - 💾 **Data Export** - Download filtered data as CSV
-    - 🎯 **Business Unit Filtering** - Quick filter by BU multiselect
+    - 🎯 **Business Unit Filtering** - Wrapping BU buttons for readability
     
     ### Data Information
     """)
@@ -599,7 +605,7 @@ def about_page(data):
     For issues or feature requests, please contact your DevOps team.
     
     ### Dashboard Version
-    Version 1.2.1 (Windows Compatible - Business Unit Multiselect Filter)
+    Version 1.2.2 (Windows Compatible - Wrapped Business Unit Buttons)
     """)
 
 
